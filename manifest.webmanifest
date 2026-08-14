@@ -1,0 +1,11 @@
+{
+  "id": "/Razi-os/",
+  "name": "Razi OS",
+  "short_name": "Razi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07080b",
+  "theme_color": "#07080b",
+  "description": "Yousef's personal Razi OS"
+}

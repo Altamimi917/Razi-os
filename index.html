@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Razi OS"/>
+<link rel="manifest" href="./manifest.webmanifest"/>
 <title>Razi OS</title>
 <style>
 :root{--bg:#07080b;--card:#12151d;--card2:#191d27;--line:#2a3040;--text:#f7f8fb;--muted:#9aa2b5;--accent:#eef1ff;--good:#4ade80;--warn:#fbbf24;--bad:#fb7185;--blue:#8ab4ff}
@@ -23,6 +24,57 @@ var main='home',route='home',stack=[];var KEY='razi.os.full.1';
 var defaultState={events:[],tasks:[],subjects:[{name:'Cybersecurity',progress:72,grade:78},{name:'Networking',progress:61,grade:74},{name:'Programming',progress:68,grade:81},{name:'Mathematics',progress:58,grade:69}],assignments:[],matches:[],rackets:[{name:'Oxdog Ultimate Pro Light',power:8.3,control:8.1,maneuver:9.2},{name:'NOX',power:7.5,control:8.8,maneuver:8.3}],players:[],watch:[],books:[],chat:[],reports:[],custom:[],notes:[],quizScore:0};
 function clone(x){return JSON.parse(JSON.stringify(x))}function load(){try{var x=localStorage.getItem(KEY);return x?Object.assign(clone(defaultState),JSON.parse(x)):clone(defaultState)}catch(e){return clone(defaultState)}}var S=load();
 var BRIDGE_URL='https://luzupmylqfsqtsgyhliz.supabase.co/functions/v1/razi-bridge',BTK='razi.bridge.token.v1',BWK='razi.bridge.workspace.v1',bridgeBusy=false;
+var PUSHK='razi.push.enabled.v1';
+function homeScreenMode(){return window.navigator.standalone===true||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)}
+function pushFlag(){try{return localStorage.getItem(PUSHK)==='1'}catch(e){return false}}
+function setPushFlag(v){try{v?localStorage.setItem(PUSHK,'1'):localStorage.removeItem(PUSHK)}catch(e){}}
+function b64ToBytes(s){var p='='.repeat((4-s.length%4)%4),b=(s+p).replace(/-/g,'+').replace(/_/g,'/'),r=atob(b),a=new Uint8Array(r.length);for(var i=0;i<r.length;i++)a[i]=r.charCodeAt(i);return a}
+async function registerRaziSW(){
+  if(!('serviceWorker' in navigator))throw new Error('service_worker_unsupported');
+  var reg=await navigator.serviceWorker.register('./sw.js',{scope:'./'});
+  await navigator.serviceWorker.ready;
+  return reg
+}
+async function enablePush(){
+  if(!bridgeConnected())return toast('Connect Razi Bridge first');
+  if(!homeScreenMode()){
+    sheet.innerHTML='<div class="sheet" onclick="if(event.target===this)R.close()"><div class="sheetbox"><div class="ey">IPHONE PUSH</div><h2>Add Razi OS to Home Screen</h2><div class="muted">On iPhone, push notifications work when Razi OS is opened from its Home Screen icon. In Safari tap Share → Add to Home Screen, then open Razi OS from the new icon and tap Enable Push again.</div><button class="btn" style="width:100%;margin-top:12px" onclick="R.close()">Got it</button></div></div>';return
+  }
+  if(!('Notification' in window)||!('PushManager' in window))return toast('Push is not supported here');
+  try{
+    var reg=await registerRaziSW();
+    var permission=Notification.permission;
+    if(permission!=='granted')permission=await Notification.requestPermission();
+    if(permission!=='granted'){setPushFlag(false);return toast('Notifications not allowed')}
+    var cfg=await bridgeCall('pushConfig');
+    var sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToBytes(cfg.vapidPublicKey)})
+    }
+    await bridgeCall('subscribePush',{subscription:sub.toJSON(),deviceName:'Yousef iPhone · Razi OS'});
+    setPushFlag(true);toast('Push reminders enabled ✓');render()
+  }catch(e){
+    setPushFlag(false);
+    var m=String(e&&e.message||e);
+    toast(m.indexOf('denied')>=0?'Notifications blocked':'Could not enable push')
+  }
+}
+async function disablePush(silent){
+  try{
+    if('serviceWorker' in navigator){
+      var reg=await navigator.serviceWorker.getRegistration('./');
+      if(reg&&reg.pushManager){
+        var sub=await reg.pushManager.getSubscription();
+        if(sub){
+          if(bridgeConnected())try{await bridgeCall('unsubscribePush',{endpoint:sub.endpoint})}catch(_e){}
+          try{await sub.unsubscribe()}catch(_e){}
+        }
+      }
+    }
+  }catch(e){}
+  setPushFlag(false);
+  if(!silent){toast('Push reminders off');render()}
+}
 function bridgeToken(){try{return localStorage.getItem(BTK)||''}catch(e){return ''}}
 function bridgeConnected(){return !!bridgeToken()}
 async function bridgeCall(action,payload,noToken){
@@ -66,10 +118,10 @@ async function confirmPair(){
     localStorage.setItem(BTK,d.token);localStorage.setItem(BWK,d.workspaceId||'');close();toast('Connected to Razi ✓');await syncCloud(true);render()
   }catch(e){toast(e.message==='code_not_found'?'Pairing code expired':'Could not connect')}
 }
-function disconnectBridge(){if(confirm('Disconnect cloud sync on this device? Your local data will stay.')){try{localStorage.removeItem(BTK);localStorage.removeItem(BWK)}catch(e){}toast('Disconnected — local data kept');render()}}
+async function disconnectBridge(){if(confirm('Disconnect cloud sync on this device? Your local data will stay.')){await disablePush(true);try{localStorage.removeItem(BTK);localStorage.removeItem(BWK)}catch(e){}toast('Disconnected — local data kept');render()}}
 async function cloudEvent(title,w,ty){
   if(!bridgeConnected()||!w)return;
-  try{await bridgeCall('createEvent',{title:title,start_at:new Date(w).toISOString(),category:ty==='life'?'personal':ty,reminder_minutes:[30]});await syncCloud(true)}catch(e){}
+  try{await bridgeCall('createEvent',{title:title,start_at:new Date(w).toISOString(),category:ty==='life'?'personal':ty,reminder_minutes:[5]});await syncCloud(true)}catch(e){}
 }
 async function cloudTask(title,due){
   if(!bridgeConnected())return;
@@ -120,7 +172,7 @@ function game3(){return top('Number Rush','MINI GAME','Tap 1 → 9 as fast as yo
 function search(){return top('Tell Me About It','EXPLORE','Search any title and ask about its story.',1)+'<div class="form"><input id="storyQ" class="field" placeholder="Movie, anime, series or book"><textarea id="storyAsk" class="field" rows="3" placeholder="What do you want to know? e.g. story without spoilers"></textarea><button class="btn" onclick="R.storyLookup()">Search web sources</button></div><div id="storyResults" class="list" style="margin-top:12px"><div class="empty">Results will appear here.</div></div>'}
 function forgot(){return top('Find What I Forgot','EXPLORE','Describe what you remember.',1)+'<div class="form"><textarea id="forgotQ" class="field" rows="5" placeholder="Example: a movie where the hero dies and repeats the same day during a war…"></textarea><button class="btn" onclick="R.findForgot()">Find it</button></div><div id="forgotResults" class="list" style="margin-top:12px"></div>'}
 function build(){return top('Build with Razi','CUSTOMIZE','Create your own sections without code.',1)+'<div class="hero"><h2>Add something new</h2><div class="form"><input id="customTitle" class="field" placeholder="Section name, e.g. Cars"><textarea id="customDesc" class="field" rows="3" placeholder="What should it contain?"></textarea><button class="btn" onclick="R.addCustom()">Create section</button></div></div>'+section('Your custom sections')+'<div class="list">'+(S.custom.length?S.custom.map(function(c){return row('🧩',esc(c.title),esc(c.desc),'')}).join(''):row('—','No custom sections yet','Create one above.',''))+'</div>'}
-function settings(){var con=bridgeConnected();return top('Settings','RAZI OS','Control your app.',1)+'<div class="list">'+row('☁️','Razi Bridge',con?'Connected · local fallback stays active':'Not connected · app still works locally',con?'<button class="pill" onclick="R.syncCloud(false)">Sync</button><button class="pill" style="margin-left:5px" onclick="R.disconnectBridge()">Disconnect</button>':'<button class="pill" onclick="R.pairBridge()">Connect</button>')+row('🔔','Notifications','Request permission for web notifications.','<button class="pill" onclick="R.notify()">Enable</button>')+row('🛠️','Improve My App','Report a bug or request a change.','',"R.open('improve')")+row('🗂️','Export my data','Download local Razi OS data.','<button class="pill" onclick="R.exportData()">Export</button>')+row('🧹','Reset local data','Clear this device.','<button class="pill" onclick="R.resetData()">Reset</button>')+'</div>'}
+function settings(){var con=bridgeConnected(),po=pushFlag(),hs=homeScreenMode();return top('Settings','RAZI OS','Control your app.',1)+'<div class="list">'+row('☁️','Razi Bridge',con?'Connected · local fallback stays active':'Not connected · app still works locally',con?'<button class="pill" onclick="R.syncCloud(false)">Sync</button><button class="pill" style="margin-left:5px" onclick="R.disconnectBridge()">Disconnect</button>':'<button class="pill" onclick="R.pairBridge()">Connect</button>')+row('🔔','Push Reminders',po?'On · 5 minutes before events':(hs?'Off · enable background reminders':'Open from Home Screen to enable'),po?'<button class="pill" onclick="R.disablePush(false)">Turn off</button>':'<button class="pill" onclick="R.notify()">Enable Push</button>')+row('🛠️','Improve My App','Report a bug or request a change.','',"R.open('improve')")+row('🗂️','Export my data','Download local Razi OS data.','<button class="pill" onclick="R.exportData()">Export</button>')+row('🧹','Reset local data','Clear this device.','<button class="pill" onclick="R.resetData()">Reset</button>')+'</div>'}
 function improve(){return top('Improve My App','SETTINGS','Bug reports and feature requests.',1)+'<div class="form"><select id="reportType" class="field"><option>Bug</option><option>UX</option><option>Performance</option><option>Feature request</option><option>AI problem</option></select><textarea id="reportText" class="field" rows="4" placeholder="Describe what happened…"></textarea><button class="btn" onclick="R.saveReport()">Save report</button></div>'+section('My reports')+'<div class="list">'+(S.reports.length?S.reports.map(function(r){return row('🛠️',esc(r.type),esc(r.text),'')}).join(''):row('—','No reports yet','Your reports appear here.',''))+'</div>'}
 function files(){return top('Files','STUDY','Lecture slides, briefs and PDFs.',1)+'<div class="hero"><h2>Upload study file</h2><div class="actions"><label class="btn">Choose file<input type="file" style="display:none" onchange="toast(\'File selected ✓\')"></label></div><div class="muted">Full AI summaries need the secure AI backend. File organization is ready locally.</div></div>'}
 function tournament(){return top('Tournament Hub','PRO PADEL','Draw, results, form and predictions.',1)+'<div class="list">'+row('🏆','Current tournament','Connect official tournament feed for live draw/results.','')+row('📈','Razi Power Ranking','Updates after every round when match data is available.','')+'</div>'}
@@ -141,7 +193,7 @@ function addMatch(){sheet.innerHTML='<div class="sheet"><div class="sheetbox"><h
 function addRacket(){sheet.innerHTML='<div class="sheet"><div class="sheetbox"><h2>Add racket</h2><input id="rn" class="field" placeholder="Racket name"><button class="btn" style="width:100%;margin-top:9px" onclick="R.saveRacket()">Add</button></div></div>'}function saveRacket(){var n=document.getElementById('rn').value.trim();if(!n)return;S.rackets.push({name:n,power:0,control:0,maneuver:0});save();close();render()}
 function addPlayer(){sheet.innerHTML='<div class="sheet"><div class="sheetbox"><h2>Add player</h2><input id="pn" class="field" placeholder="Name"><button class="btn" style="width:100%;margin-top:9px" onclick="R.savePlayer()">Add</button></div></div>'}function savePlayer(){var n=document.getElementById('pn').value.trim();if(!n)return;S.players.push({name:n,matches:0,winrate:0});save();close();render()}
 function previewVideo(el){var f=el.files&&el.files[0];if(!f)return;var u=URL.createObjectURL(f);document.getElementById('videoPreview').innerHTML='<video class="thumb" controls src="'+u+'"></video>'}function previewTT(el){var f=el.files&&el.files[0];if(!f)return;var out=document.getElementById('ttpreview');if(f.type.indexOf('image/')===0){var u=URL.createObjectURL(f);out.innerHTML='<div style="padding:12px"><img class="thumb" src="'+u+'"><div class="muted" style="margin-top:8px">'+esc(f.name)+' selected. Confirm times manually or send the image to the AI backend when connected.</div></div>'}else out.innerHTML=row('📄',esc(f.name),'PDF selected.','')}
-function notify(){if(!('Notification'in window))return toast('Notifications not supported here');Notification.requestPermission().then(function(p){toast(p==='granted'?'Notifications enabled ✓':'Permission not granted')})}
+function notify(){return enablePush()}
 function loadNews(kind,btn){if(btn){var ts=document.querySelectorAll('.tab');for(var i=0;i<ts.length;i++)ts[i].classList.remove('on');btn.classList.add('on')}var el=document.getElementById('news');if(!el)return;el.innerHTML='<div class="empty">Loading headlines…</div>';fetch('/api/news?kind='+encodeURIComponent(kind)).then(function(r){return r.json()}).then(function(d){var arr=d.items||[];el.innerHTML=arr.length?arr.slice(0,15).map(function(n){return '<a class="newslink" href="'+esc(n.link)+'" target="_blank"><div class="mediaRow"><div class="rmain"><div class="rt">'+esc(n.title)+'</div><div class="rs">'+esc(n.source||'')+' · '+esc(n.when||'')+'</div></div><span class="arr">›</span></div></a>'}).join(''):'<div class="empty">No headlines available.</div>'}).catch(function(){el.innerHTML='<div class="empty">Live headlines are unavailable right now.</div>'})}
 function searchAnime(){var q=document.getElementById('animeQ').value.trim(),el=document.getElementById('animeResults');if(!q)return;el.innerHTML='<div class="empty">Searching…</div>';fetch('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'query($s:String){Page(perPage:12){media(search:$s,type:ANIME,sort:POPULARITY_DESC){id title{romaji english} episodes status genres coverImage{medium} description(asHtml:false)}}}',variables:{s:q}})}).then(function(r){return r.json()}).then(function(d){var a=d.data.Page.media||[];el.innerHTML=a.map(function(x){return '<div class="mediaRow"><img class="cover" src="'+esc(x.coverImage.medium)+'"><div class="rmain"><div class="rt">'+esc(x.title.english||x.title.romaji)+'</div><div class="rs">'+esc((x.genres||[]).slice(0,3).join(' · '))+' · '+(x.episodes||'?')+' eps · '+esc(x.status||'')+'</div><button class="pill" style="margin-top:8px" onclick="R.addWatch(\''+esc((x.title.english||x.title.romaji).replace(/'/g,"\\'") )+'\')">+ Watchlist</button></div></div>'}).join('')||'<div class="empty">No results.</div>'}).catch(function(){el.innerHTML='<div class="empty">Anime search unavailable right now.</div>'})}
 function searchBooks(){var q=document.getElementById('bookQ').value.trim(),el=document.getElementById('bookResults');if(!q)return;el.innerHTML='<div class="empty">Searching…</div>';fetch('https://www.googleapis.com/books/v1/volumes?q='+encodeURIComponent(q)+'&maxResults=10').then(function(r){return r.json()}).then(function(d){var a=d.items||[];el.innerHTML=a.map(function(it){var v=it.volumeInfo||{},im=v.imageLinks&&v.imageLinks.thumbnail||'';return '<div class="mediaRow">'+(im?'<img class="cover" src="'+esc(im.replace('http:','https:'))+'">':'')+'<div class="rmain"><div class="rt">'+esc(v.title||'Untitled')+'</div><div class="rs">'+esc((v.authors||[]).join(', '))+' · '+(v.pageCount||'?')+' pages</div><button class="pill" style="margin-top:8px" onclick="R.saveBook(\''+esc((v.title||'Untitled').replace(/'/g,"\\'"))+'\',\''+esc(((v.authors||[]).join(', ')).replace(/'/g,"\\'"))+'\')">Want to read</button></div></div>'}).join('')||'<div class="empty">No results.</div>'}).catch(function(){el.innerHTML='<div class="empty">Book search unavailable right now.</div>'})}
@@ -158,7 +210,7 @@ function exportICS(){var lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Razi 
 var reactTimer=0,reactStart=0,reactReady=false;function reactTap(){var b=document.getElementById('react'),t=document.getElementById('reactText');if(!reactTimer&&!reactReady){b.textContent='WAIT';reactTimer=setTimeout(function(){reactTimer=0;reactReady=true;reactStart=performance.now();b.textContent='GO!';b.style.background='#eef1ff';b.style.color='#08090c';t.textContent='Tap now!'},900+Math.random()*2200);return}if(reactTimer){clearTimeout(reactTimer);reactTimer=0;b.textContent='START';t.textContent='Too early 😭';return}if(reactReady){var ms=Math.round(performance.now()-reactStart);reactReady=false;b.textContent='START';b.style.background='';b.style.color='';t.textContent=ms+' ms';}}
 var memTarget=[],memScore=0,memAccept=false;function memStart(){memTarget=[];memAccept=false;for(var i=0;i<9;i++)document.getElementById('m'+i).classList.remove('on');while(memTarget.length<3){var n=Math.floor(Math.random()*9);if(memTarget.indexOf(n)<0)memTarget.push(n)}memTarget.forEach(function(n){document.getElementById('m'+n).classList.add('on')});setTimeout(function(){memTarget.forEach(function(n){document.getElementById('m'+n).classList.remove('on')});memAccept=true},1000)}function memTap(i){if(!memAccept)return;if(memTarget.indexOf(i)>=0){document.getElementById('m'+i).classList.add('on');memTarget=memTarget.filter(function(x){return x!==i});if(!memTarget.length){memScore++;memAccept=false;document.getElementById('memText').textContent='Score '+memScore+' ✓'}}else{memScore=0;memAccept=false;document.getElementById('memText').textContent='Missed. Score reset.'}}
 var rushNext=1,rushStartAt=0;function rushStart(){var nums=[1,2,3,4,5,6,7,8,9];nums.sort(function(){return Math.random()-.5});document.getElementById('rush').innerHTML=nums.map(function(n){return '<button class="mem" onclick="R.rushTap('+n+',this)">'+n+'</button>'}).join('');rushNext=1;rushStartAt=performance.now();document.getElementById('rushText').textContent='Tap 1'}function rushTap(n,b){if(n!==rushNext)return;b.style.visibility='hidden';rushNext++;if(rushNext===10)document.getElementById('rushText').textContent=Math.round(performance.now()-rushStartAt)+' ms';else document.getElementById('rushText').textContent='Tap '+rushNext}
-window.R={open:open,back:back,main:setMain,quick:quick,close:close,addQuick:addQuick,pairBridge:pairBridge,confirmPair:confirmPair,syncCloud:syncCloud,disconnectBridge:disconnectBridge,doNow:doNow,addSubject:addSubject,saveSubject:saveSubject,addAssignment:addAssignment,saveAssignment:saveAssignment,bumpAssign:bumpAssign,addTask:addTask,saveTask:saveTask,toggleTask:toggleTask,openSubject:openSubject,saveNote:saveNote,quiz:quiz,addMatch:addMatch,saveMatch:saveMatch,addRacket:addRacket,saveRacket:saveRacket,addPlayer:addPlayer,savePlayer:savePlayer,previewVideo:previewVideo,previewTT:previewTT,notify:notify,loadNews:loadNews,searchAnime:searchAnime,searchBooks:searchBooks,searchTV:searchTV,addWatch:addWatch,saveBook:saveBook,storyLookup:storyLookup,findForgot:findForgot,pick:pick,pickDone:pickDone,addCustom:addCustom,saveReport:saveReport,exportData:exportData,resetData:resetData,exportICS:exportICS,reactTap:reactTap,memStart:memStart,memTap:memTap,rushStart:rushStart,rushTap:rushTap,askPreset:function(t){askText(t)}};
-send.onclick=function(){var t=ask.value;ask.value='';askText(t)};ask.onkeydown=function(e){if((e.key&&e.key==='Enter')||e.keyCode===13){var t=ask.value;ask.value='';askText(t)}};render();if(bridgeConnected())setTimeout(function(){syncCloud(true)},700);setInterval(function(){if(bridgeConnected()&&!document.hidden)syncCloud(true)},60000);document.addEventListener('visibilitychange',function(){if(!document.hidden&&bridgeConnected())syncCloud(true)});
+window.R={open:open,back:back,main:setMain,quick:quick,close:close,addQuick:addQuick,pairBridge:pairBridge,confirmPair:confirmPair,syncCloud:syncCloud,disconnectBridge:disconnectBridge,doNow:doNow,addSubject:addSubject,saveSubject:saveSubject,addAssignment:addAssignment,saveAssignment:saveAssignment,bumpAssign:bumpAssign,addTask:addTask,saveTask:saveTask,toggleTask:toggleTask,openSubject:openSubject,saveNote:saveNote,quiz:quiz,addMatch:addMatch,saveMatch:saveMatch,addRacket:addRacket,saveRacket:saveRacket,addPlayer:addPlayer,savePlayer:savePlayer,previewVideo:previewVideo,previewTT:previewTT,notify:notify,disablePush:disablePush,loadNews:loadNews,searchAnime:searchAnime,searchBooks:searchBooks,searchTV:searchTV,addWatch:addWatch,saveBook:saveBook,storyLookup:storyLookup,findForgot:findForgot,pick:pick,pickDone:pickDone,addCustom:addCustom,saveReport:saveReport,exportData:exportData,resetData:resetData,exportICS:exportICS,reactTap:reactTap,memStart:memStart,memTap:memTap,rushStart:rushStart,rushTap:rushTap,askPreset:function(t){askText(t)}};
+send.onclick=function(){var t=ask.value;ask.value='';askText(t)};ask.onkeydown=function(e){if((e.key&&e.key==='Enter')||e.keyCode===13){var t=ask.value;ask.value='';askText(t)}};render();if('serviceWorker' in navigator)registerRaziSW().catch(function(){});if(bridgeConnected())setTimeout(function(){syncCloud(true)},700);setInterval(function(){if(bridgeConnected()&&!document.hidden)syncCloud(true)},60000);document.addEventListener('visibilitychange',function(){if(!document.hidden&&bridgeConnected())syncCloud(true)});
 })();
 </script></body></html>
